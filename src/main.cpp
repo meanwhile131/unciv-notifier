@@ -220,7 +220,7 @@ int main() {
 	curl_global_init(CURL_GLOBAL_ALL);
 	std::string url = config["game"]["url"].value_or("");
 	td_api::object_ptr<td_api::proxy> proxy;
-	if (config["proxy"])
+	if (config.contains("proxy"))
 		proxy = td_api::make_object<td_api::proxy>(
 				config["proxy"]["host"].value_or(""),
 				config["proxy"]["port"].value_or(0),
