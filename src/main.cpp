@@ -208,7 +208,9 @@ class UncivNotifier {
 									std::cout << td_api::to_string(upd) << std::endl;
 								}));
 					},
-			[](auto &) {}));
+			[](auto &upd) {
+				std::cout << td_api::to_string(upd) << std::endl;
+			}));
 
 	}
 };
