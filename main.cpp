@@ -144,6 +144,9 @@ class UncivNotifier {
 		std::string currentCiv = game["currentPlayer"];
 		std::cout << "Current turn is " << currentCiv << std::endl;
 		bool new_turn = game["turns"] > turn_count;
+		if (new_turn) {
+			notify_interval = start_notify_interval;
+		}
 		if (playerIDs.count(currentCiv) > 0) {
 			std::string player = playerIDs[currentCiv];
 			auto now = std::chrono::steady_clock::now();
