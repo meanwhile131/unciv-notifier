@@ -16,10 +16,12 @@
 #include <functional>
 #include <limits>
 #include <toml++/toml.hpp>
+#include <chrono>
 
 using json = nlohmann::json;
 
 namespace td_api = td::td_api;
+using namespace std::chrono_literals;
 
 size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
 	auto data = static_cast<std::string*>(userdata);
@@ -40,6 +42,11 @@ class UncivNotifier {
 	std::shared_mutex requestMutex;
 	td::ClientManager::RequestId requestId = 1;
 	std::unordered_map<td::ClientManager::RequestId, RequestCallback> requestCallbacks;
+
+	std::chrono::steady_clock::duration start_notify_interval = 5min;
+	std::chrono::steady_clock::duration notify_interval = start_notify_interval;
+	std::chrono::steady_clock::time_point last_notify;
+	unsigned int turn_count;
 
 	public:
 	UncivNotifier(std::string previewUrl, td_api::object_ptr<td_api::proxy> proxy, std::string notification, std::string uuid, td_api::int53 chat_id) : notification(notification), uuid(uuid), chat_id(chat_id) {
@@ -93,6 +100,7 @@ class UncivNotifier {
 		requestId++;
 	}
 	void checkGameState() {
+		std::cout << "Checking game state" << std::endl;
 		std::string data;
 		curl_easy_setopt(handle, CURLOPT_WRITEDATA, &data);
 		CURLcode code = curl_easy_perform(handle);
@@ -134,10 +142,15 @@ class UncivNotifier {
 			}
 		}
 		std::string currentCiv = game["currentPlayer"];
+		std::cout << "Current turn is " << currentCiv << std::endl;
+		bool new_turn = game["turns"] > turn_count;
 		if (playerIDs.count(currentCiv) > 0) {
 			std::string player = playerIDs[currentCiv];
-			if (player == uuid) {
-				std::cout << "other's turn" << std::endl;
+			auto now = std::chrono::steady_clock::now();
+			auto since_last_notify = now - last_notify;
+			bool should_notify = (since_last_notify >= notify_interval) || new_turn;
+			if (player == uuid && should_notify) {
+				std::cout << "notifying " + currentCiv << " (" << chat_id << "), next notify after " << notify_interval << std::endl;
 				auto request = td_api::make_object<td_api::sendMessage>();
 				request->chat_id_ = chat_id;
 				auto message = td_api::make_object<td_api::inputMessageText>();
@@ -145,9 +158,12 @@ class UncivNotifier {
 				text->text_ = notification;
 				message->text_ = std::move(text);
 				request->input_message_content_ = std::move(message);
+				notify_interval *= 2;
+				last_notify = now;
 				send_query(std::move(request));
 			}
 		}
+		turn_count = game["turns"];
 	}
 	void handleUpdate(td_api::object_ptr<td_api::Object> update) {
 		td_api::downcast_call(*update, overloaded(
@@ -189,9 +205,7 @@ class UncivNotifier {
 									std::cout << td_api::to_string(upd) << std::endl;
 								}));
 					},
-			[](auto &upd) {
-				//	std::cout << td_api::to_string(upd) << std::endl;
-			}));
+			[](auto &) {}));
 
 	}
 };
