@@ -33,7 +33,7 @@ class UncivNotifier {
 	using RequestCallback = std::function<void(td_api::object_ptr<td_api::Object>)>;
 	std::unique_ptr<td::ClientManager> client_manager;
 	td::ClientManager::ClientId client_id;
-	CURL *handle;
+	CURL *handle = curl_easy_init();
 	std::jthread stateCheckThread;
 	std::string notification;
 	td_api::int53 chat_id;
@@ -48,9 +48,13 @@ class UncivNotifier {
 	std::chrono::steady_clock::time_point last_notify;
 	unsigned int turn_count;
 
+	std::chrono::hours start_night;
+	std::chrono::hours end_night;
+	unsigned int max_night_messages;
+	unsigned int night_messages = 0;
+
 	public:
-	UncivNotifier(std::string previewUrl, td_api::object_ptr<td_api::proxy> proxy, std::string notification, std::string uuid, td_api::int53 chat_id) : notification(notification), uuid(uuid), chat_id(chat_id) {
-		handle = curl_easy_init();
+	UncivNotifier(std::string previewUrl, td_api::object_ptr<td_api::proxy> proxy, std::string notification, std::string uuid, td_api::int53 chat_id, std::chrono::hours start_night, std::chrono::hours end_night, unsigned int max_night_messages) : notification(notification), uuid(uuid), chat_id(chat_id), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages) {
 		curl_easy_setopt(handle, CURLOPT_URL, previewUrl.c_str());
 		curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, write_callback);
 
@@ -100,6 +104,22 @@ class UncivNotifier {
 		requestId++;
 	}
 	void checkGameState() {
+		auto now = std::chrono::utc_clock::now();
+		auto days = std::chrono::floor<std::chrono::days>(now);
+		std::chrono::hh_mm_ss time_of_day(now - days);
+		auto hours = time_of_day.hours();
+		bool overnight = start_night > end_night;
+		bool is_night_overnight = hours >= start_night || hours <= end_night;
+		bool is_night_day = hours >= start_night && hours <= end_night;
+		bool is_night = overnight ? is_night_overnight : is_night_day;
+		if (is_night && night_messages >= max_night_messages) {
+			std::cout << "Skipping game checks because night and max message count reached" << std::endl;
+			return;
+		}
+		if (!is_night && night_messages != 0) {
+			std::cout << "Resetting night message count" << std::endl;
+			night_messages = 0;
+		}
 		std::cout << "Checking game state" << std::endl;
 		std::string data;
 		curl_easy_setopt(handle, CURLOPT_WRITEDATA, &data);
@@ -163,6 +183,8 @@ class UncivNotifier {
 				request->input_message_content_ = std::move(message);
 				notify_interval *= 2;
 				last_notify = now;
+				if (is_night)
+					night_messages++;
 				send_query(std::move(request));
 			}
 		}
@@ -228,6 +250,9 @@ int main() {
 	UncivNotifier app(url, std::move(proxy),
 			config["notify"]["text"].value_or(""),
 			config["notify"]["uuid"].value_or(""),
-			config["notify"]["chat_id"].value_or(0));
+			config["notify"]["chat_id"].value_or(0),
+			std::chrono::hours(config["notify"]["start_night"].value_or(0)),
+			std::chrono::hours(config["notify"]["end_night"].value_or(0)),
+			config["notify"]["max_night_messages"].value_or(0));
 	app.loop();
 }
