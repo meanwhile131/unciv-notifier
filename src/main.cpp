@@ -183,8 +183,10 @@ class UncivNotifier {
 				request->input_message_content_ = std::move(message);
 				notify_interval *= 2;
 				last_notify = now;
-				if (is_night)
+				if (is_night) {
 					night_messages++;
+					std::cout << "Used " << night_messages << "/" << max_night_messages << "night messages" << std::endl;
+				}
 				send_query(std::move(request));
 			}
 		}
