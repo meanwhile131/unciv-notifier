@@ -70,7 +70,7 @@ namespace {
 				unsigned int max_night_messages,
 				std::chrono::hours end_night,
 				std::chrono::steady_clock::duration start_notify_interval)
-			: client_id(client_manager->create_client_id()), notification(std::move(std::move(notification))),
+			: client_manager(std::make_unique<td::ClientManager>()), client_id(client_manager->create_client_id()), notification(std::move(std::move(notification))),
 			uuid(std::move(std::move(uuid))), chat_id(chat_id),
 			start_night(start_night), end_night(end_night),
 			max_night_messages(max_night_messages),
@@ -81,7 +81,6 @@ namespace {
 
 				td::ClientManager::execute(
 						td_api::make_object<td_api::setLogVerbosityLevel>(1));
-				client_manager = std::make_unique<td::ClientManager>();
 
 				send_query(
 						td_api::make_object<td_api::getOption>("version"));
