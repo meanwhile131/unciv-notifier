@@ -43,7 +43,7 @@ class UncivNotifier {
 	td::ClientManager::RequestId requestId = 1;
 	std::unordered_map<td::ClientManager::RequestId, RequestCallback> requestCallbacks;
 
-	std::chrono::steady_clock::duration start_notify_interval = 5min;
+	std::chrono::steady_clock::duration start_notify_interval;
 	std::chrono::steady_clock::duration notify_interval = start_notify_interval;
 	std::chrono::steady_clock::time_point last_notify;
 	unsigned int turn_count;
@@ -54,7 +54,7 @@ class UncivNotifier {
 	unsigned int night_messages = 0;
 
 	public:
-	UncivNotifier(std::string previewUrl, td_api::object_ptr<td_api::proxy> proxy, std::string notification, std::string uuid, td_api::int53 chat_id, std::chrono::hours start_night, std::chrono::hours end_night, unsigned int max_night_messages) : notification(notification), uuid(uuid), chat_id(chat_id), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages) {
+	UncivNotifier(std::string previewUrl, td_api::object_ptr<td_api::proxy> proxy, std::string notification, std::string uuid, td_api::int53 chat_id, std::chrono::hours start_night, std::chrono::hours end_night, unsigned int max_night_messages, std::chrono::steady_clock::duration start_notify_interval) : notification(notification), uuid(uuid), chat_id(chat_id), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages), start_notify_interval(start_notify_interval) {
 		curl_easy_setopt(handle, CURLOPT_URL, previewUrl.c_str());
 		curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, write_callback);
 
@@ -255,6 +255,7 @@ int main() {
 			config["notify"]["chat_id"].value_or(0),
 			std::chrono::hours(config["notify"]["start_night"].value_or(0)),
 			std::chrono::hours(config["notify"]["end_night"].value_or(0)),
-			config["notify"]["max_night_messages"].value_or(0));
+			config["notify"]["max_night_messages"].value_or(0),
+			std::chrono::minutes(config["notify"]["start_notify_interval"].value_or(0)));
 	app.loop();
 }
