@@ -4,14 +4,14 @@ namespace detail {
 
 	template <class F>
 		struct overload<F> : public F {
-			explicit overload(F f) : F(f) {
+			explicit overload(F func) : F(func) {
 			}
 		};
 	template <class F, class... Fs>
 		struct overload<F, Fs...>
 		: public overload<F>
 		, public overload<Fs...> {
-			overload(F f, Fs... fs) : overload<F>(f), overload<Fs...>(fs...) {
+			explicit overload(F func, Fs... funcs) : overload<F>(func), overload<Fs...>(funcs...) {
 			}
 			using overload<F>::operator();
 			using overload<Fs...>::operator();
@@ -19,6 +19,6 @@ namespace detail {
 }  // namespace detail
 
 template <class... F>
-auto overloaded(F... f) {
-	return detail::overload<F...>(f...);
+auto overloaded(F... func) {
+	return detail::overload<F...>(func...);
 }
