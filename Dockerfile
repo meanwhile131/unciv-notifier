@@ -13,4 +13,4 @@ FROM alpine AS run
 RUN apk add --no-cache zlib openssl libcurl libstdc++ libgcc
 COPY --from=build /root/build/main /main
 WORKDIR /data
-CMD ["/main"]
+ENTRYPOINT ["/main"]
