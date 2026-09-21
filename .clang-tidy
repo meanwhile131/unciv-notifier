@@ -1,1 +1,1 @@
-Checks: '*,-llvm*,-fuchsia-*,-altera-unroll-loops'
+Checks: '*,-llvm*,-fuchsia-*,-altera-*'

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.28)
 project(UncivNotifier)
 
 include(FetchContent)
@@ -12,8 +12,5 @@ FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases
 FetchContent_MakeAvailable(nlohmann_json)
 FetchContent_Declare(tomlplusplus URL https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz)
 FetchContent_MakeAvailable(tomlplusplus)
-add_executable(main src/main.cpp)
+add_executable(main src/main.cpp src/game.cpp)
 target_link_libraries(main PRIVATE Td::TdStatic CURL::libcurl nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus)
-set_target_properties(main PROPERTIES
-	CXX_STANDARD 20
-)

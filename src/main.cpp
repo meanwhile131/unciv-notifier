@@ -1,12 +1,11 @@
 #include "overload.h"
 #include <chrono>
-#include <cstddef>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <iostream>
 #include <mutex>
-#include <nlohmann/json.hpp>
 #include <openssl/evp.h>
+#include <nlohmann/json.hpp>
 #include <shared_mutex>
 #include <string>
 #include <td/telegram/Client.h>
@@ -16,7 +15,7 @@
 #include <toml++/toml.hpp>
 #include <utility>
 #include <zlib.h>
-#include <cstdint>
+#include "game.h"
 
 using json = nlohmann::json;
 
@@ -24,21 +23,15 @@ namespace td_api = td::td_api;
 using namespace std::chrono_literals;
 
 namespace {
-	auto write_callback(char *ptr, size_t  /*size*/, size_t nmemb, void *userdata) -> size_t {
-		auto *data = static_cast<std::string*>(userdata);
-		data->append(ptr, nmemb);
-		return nmemb;
-	}
-
 	class UncivNotifier {
 		using RequestCallback = std::function<void(td_api::object_ptr<td_api::Object>)>;
 		std::unique_ptr<td::ClientManager> client_manager;
 		td::ClientManager::ClientId client_id{};
-		CURL *handle = curl_easy_init();
 		std::jthread stateCheckThread;
 		std::string notification;
 		td_api::int53 chat_id{};
 		std::string uuid;
+		Game current_game;
 
 		std::shared_mutex requestMutex;
 		td::ClientManager::RequestId requestId = 1;
@@ -47,7 +40,6 @@ namespace {
 		std::chrono::steady_clock::duration start_notify_interval;
 		std::chrono::steady_clock::duration notify_interval = start_notify_interval;
 		std::chrono::steady_clock::time_point last_notify;
-		unsigned int turn_count{};
 
 		std::chrono::hours start_night;
 		std::chrono::hours end_night;
@@ -58,10 +50,6 @@ namespace {
 		const td_api::string API_HASH = "a3406de8d171bb422bb6ddf3bbd800e2";
 
 		public:
-		UncivNotifier(const UncivNotifier &) = delete;
-		UncivNotifier(UncivNotifier &&) = delete;
-		auto operator=(const UncivNotifier &) -> UncivNotifier & = delete;
-		auto operator=(UncivNotifier &&) -> UncivNotifier & = delete;
 		UncivNotifier(
 				const std::string &previewUrl,
 				td_api::object_ptr<td_api::proxy> proxy,
@@ -71,13 +59,10 @@ namespace {
 				std::chrono::hours end_night,
 				std::chrono::steady_clock::duration start_notify_interval)
 			: client_manager(std::make_unique<td::ClientManager>()), client_id(client_manager->create_client_id()), notification(std::move(std::move(notification))),
-			uuid(std::move(std::move(uuid))), chat_id(chat_id),
+			current_game(previewUrl), uuid(std::move(std::move(uuid))), chat_id(chat_id),
 			start_night(start_night), end_night(end_night),
 			max_night_messages(max_night_messages),
 			start_notify_interval(start_notify_interval) {
-				curl_easy_setopt(handle, CURLOPT_URL, previewUrl.c_str());
-				curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
-						write_callback);
 
 				td::ClientManager::execute(
 						td_api::make_object<td_api::setLogVerbosityLevel>(1));
@@ -107,9 +92,6 @@ namespace {
 					handleUpdate(std::move(update.object));
 				}
 			}
-		}
-		~UncivNotifier() {
-			curl_easy_cleanup(handle);
 		}
 		private:
 		void checkStateThread() {
@@ -145,62 +127,19 @@ namespace {
 				std::cout << "Resetting night message count" << '\n';
 				night_messages = 0;
 			}
-			std::cout << "Checking game state" << '\n';
-			std::string data;
-			curl_easy_setopt(handle, CURLOPT_WRITEDATA, &data);
-			CURLcode const code = curl_easy_perform(handle);
-			std::vector<unsigned char> data_vector(data.begin(), data.end());
-
-			std::vector<unsigned char> inbuf(data.size()); // data always smaller than base64 
-			int size = EVP_DecodeBlock(inbuf.data(), data_vector.data(), static_cast<int>(data_vector.size()));
-			inbuf.resize(size);
-
-			z_stream strm;
-			strm.zalloc = Z_NULL;
-			strm.zfree = Z_NULL;
-			strm.opaque = Z_NULL;
-			strm.total_in = 0;
-			strm.next_in = inbuf.data();
-			strm.avail_in = inbuf.size();
-			int ret = inflateInit2(&strm, MAX_WBITS + 16);
-			if (ret != Z_OK) {
-				std::cout << "inflateInit: " << ret << '\n';
-			}
-			const size_t BUFFER_SIZE = 32768;
-			std::vector<unsigned char> buffer(BUFFER_SIZE);
-			std::vector<unsigned char> decompressed;
-			while (ret != Z_STREAM_END) {
-				strm.next_out = buffer.data();
-				strm.avail_out = buffer.size();
-				ret = inflate(&strm, Z_NO_FLUSH);
-				if (ret != Z_OK && ret != Z_STREAM_END) {
-					std::cout << "inflate: " << ret << '\n';
-					break;
-				}
-				size_t have = buffer.size() - strm.avail_out;
-				decompressed.insert(decompressed.end(), buffer.begin(), buffer.begin() + static_cast<int64_t>(have));
-			}
-			inflateEnd(&strm);
-			json game = json::parse(decompressed);
-			std::map<std::string, std::string> playerIDs;
-			for (json civilization : game["civilizations"]) {
-				if (civilization.contains("playerId")) {
-					playerIDs[civilization["civID"]] = civilization["playerId"];
-				}
-			}
-			std::string currentCiv = game["currentPlayer"];
-			std::cout << "Current turn is " << currentCiv << '\n';
-			bool new_turn = game["turns"] > turn_count;
+			current_game.update();
+			Civilization player = current_game.getCurrentPlayer();
+			std::cout << "Current turn is " << player.civID << '\n';
+			bool new_turn = current_game.isNewTurn();
 			if (new_turn) {
 				notify_interval = start_notify_interval;
 			}
-			if (playerIDs.contains(currentCiv)) {
-				std::string player = playerIDs[currentCiv];
+			if (player.playerId == uuid) {
 				auto now = std::chrono::steady_clock::now();
 				auto since_last_notify = now - last_notify;
 				bool should_notify = (since_last_notify >= notify_interval) || new_turn;
-				if (player == uuid && should_notify) {
-					std::cout << "notifying " + currentCiv << " (" << chat_id << "), next notify after " << notify_interval << '\n';
+				if (should_notify) {
+					std::cout << "notifying " + player.civID << " (" << chat_id << "), next notify after " << notify_interval << '\n';
 					auto request = td_api::make_object<td_api::sendMessage>();
 					request->chat_id_ = chat_id;
 					auto message = td_api::make_object<td_api::inputMessageText>();
@@ -217,7 +156,6 @@ namespace {
 					send_query(std::move(request));
 				}
 			}
-			turn_count = game["turns"];
 		}
 		void handleUpdate(td_api::object_ptr<td_api::Object> update) {
 			td_api::downcast_call(*update, overloaded(
@@ -265,7 +203,7 @@ namespace {
 
 		}
 	};
-} // namespace
+}  // namespace
 
 auto main() -> int {
 	auto config = toml::parse_file("config.toml");
