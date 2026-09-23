@@ -17,7 +17,7 @@ Game::Game(const std::string& previewUrl) : handle(curl_easy_init(), curl_easy_c
 	curl_easy_setopt(&handle, CURLOPT_WRITEFUNCTION, write_callback);
 }
 void Game::update() {
-	json game = fetchGame();
+	json game = fetch();
 	new_turn = game["turns"] > turn_count;
 	turn_count = game["turns"]; 
 
@@ -29,7 +29,7 @@ auto Game::isNewTurn() const -> bool {
 auto Game::getCurrentPlayer() -> Civilization {
 	return current_player;
 }
-auto Game::fetchGame() -> json {
+auto Game::fetch() -> json {
 	std::string data;
 	curl_easy_setopt(&handle, CURLOPT_WRITEDATA, &data);
 	CURLcode const code = curl_easy_perform(&handle);

@@ -16,6 +16,7 @@
 #include <utility>
 #include <zlib.h>
 #include "game.h"
+#include "user.h"
 
 using json = nlohmann::json;
 
@@ -30,20 +31,13 @@ namespace {
 		std::jthread stateCheckThread;
 		std::string notification;
 		td_api::int53 chat_id{};
-		std::string uuid;
 		Game current_game;
+		User user;
 
 		std::shared_mutex requestMutex;
 		td::ClientManager::RequestId requestId = 1;
 		std::unordered_map<td::ClientManager::RequestId, RequestCallback> requestCallbacks;
 
-		std::chrono::steady_clock::duration start_notify_interval;
-		std::chrono::steady_clock::duration notify_interval = start_notify_interval;
-		std::chrono::steady_clock::time_point last_notify;
-
-		std::chrono::hours start_night;
-		std::chrono::hours end_night;
-		unsigned int max_night_messages;
 		unsigned int night_messages = 0;
 
 		const td_api::int32 API_ID = 94575;
@@ -53,29 +47,23 @@ namespace {
 		UncivNotifier(
 				const std::string &previewUrl,
 				td_api::object_ptr<td_api::proxy> proxy,
-				std::string notification, td_api::int53 chat_id,
-				std::string uuid, std::chrono::hours start_night,
-				unsigned int max_night_messages,
-				std::chrono::hours end_night,
-				std::chrono::steady_clock::duration start_notify_interval)
-			: client_manager(std::make_unique<td::ClientManager>()), client_id(client_manager->create_client_id()), notification(std::move(std::move(notification))),
-			current_game(previewUrl), uuid(std::move(std::move(uuid))), chat_id(chat_id),
-			start_night(start_night), end_night(end_night),
-			max_night_messages(max_night_messages),
-			start_notify_interval(start_notify_interval) {
+				User user)
+			: client_manager(std::make_unique<td::ClientManager>()),
+			client_id(client_manager->create_client_id()),
+			current_game(previewUrl),
+			user(std::move(user))
+		{
 
-				td::ClientManager::execute(
-						td_api::make_object<td_api::setLogVerbosityLevel>(1));
+			td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
 
-				send_query(
-						td_api::make_object<td_api::getOption>("version"));
+			send_query(td_api::make_object<td_api::getOption>("version"));
 
-				if (proxy) {
-					auto request = td_api::make_object<td_api::addProxy>(
-							std::move(proxy), true, "");
-					send_query(std::move(request));
-				}
+			if (proxy) {
+				auto request = td_api::make_object<td_api::addProxy>(
+						std::move(proxy), true, "");
+				send_query(std::move(request));
 			}
+		}
 		void loop() {
 			while (true) {
 				const double UPDATE_TIMEOUT = 5;
@@ -111,48 +99,14 @@ namespace {
 			requestId++;
 		}
 		void checkGameState() {
-			auto now = std::chrono::utc_clock::now();
-			auto days = std::chrono::floor<std::chrono::days>(now);
-			std::chrono::hh_mm_ss time_of_day(now - days);
-			auto hours = time_of_day.hours();
-			bool overnight = start_night > end_night;
-			bool is_night_overnight = hours >= start_night || hours <= end_night;
-			bool is_night_day = hours >= start_night && hours <= end_night;
-			bool const is_night = overnight ? is_night_overnight : is_night_day;
-			if (is_night && night_messages >= max_night_messages) {
-				std::cout << "Skipping game checks because night and max message count reached" << '\n';
-				return;
-			}
-			if (!is_night && night_messages != 0) {
-				std::cout << "Resetting night message count" << '\n';
-				night_messages = 0;
-			}
 			current_game.update();
 			Civilization player = current_game.getCurrentPlayer();
 			std::cout << "Current turn is " << player.civID << '\n';
 			bool new_turn = current_game.isNewTurn();
-			if (new_turn) {
-				notify_interval = start_notify_interval;
-			}
-			if (player.playerId == uuid) {
-				auto now = std::chrono::steady_clock::now();
-				auto since_last_notify = now - last_notify;
-				bool should_notify = (since_last_notify >= notify_interval) || new_turn;
-				if (should_notify) {
-					std::cout << "notifying " + player.civID << " (" << chat_id << "), next notify after " << notify_interval << '\n';
-					auto request = td_api::make_object<td_api::sendMessage>();
-					request->chat_id_ = chat_id;
-					auto message = td_api::make_object<td_api::inputMessageText>();
-					auto text = td_api::make_object<td_api::formattedText>();
-					text->text_ = notification;
-					message->text_ = std::move(text);
-					request->input_message_content_ = std::move(message);
-					notify_interval *= 2;
-					last_notify = now;
-					if (is_night) {
-						night_messages++;
-						std::cout << "Used " << night_messages << "/" << max_night_messages << " night messages" << '\n';
-					}
+			if (player.playerId == user.getUUID()) {
+				auto request = user.notifyIfNeeded(new_turn).value_or(nullptr);
+				if (request) {
+					std::cout << "notifying " + player.civID << " (" << chat_id << "), next notify after " << user.getNotifyInterval() << '\n';
 					send_query(std::move(request));
 				}
 			}
@@ -216,13 +170,17 @@ auto main() -> int {
 				config["proxy"]["port"].value_or(0),
 				td_api::make_object<td_api::proxyTypeMtproto>(config["proxy"]["secret"].value_or("")));
 	}
-	UncivNotifier app(url, std::move(proxy),
-			config["notify"]["text"].value_or(""),
+	User user(
 			config["notify"]["chat_id"].value_or(0),
 			config["notify"]["uuid"].value_or(""),
+			std::chrono::minutes(config["notify"]["start_notify_interval"].value_or(0)),
+			config["notify"]["text"].value_or(""),
 			std::chrono::hours(config["notify"]["start_night"].value_or(0)),
 			config["notify"]["max_night_messages"].value_or(0),
-			std::chrono::hours(config["notify"]["end_night"].value_or(0)),
-			std::chrono::minutes(config["notify"]["start_notify_interval"].value_or(0)));
+			std::chrono::hours(config["notify"]["end_night"].value_or(0)));
+	UncivNotifier app(url,
+			std::move(proxy),
+			user,
+			);
 	app.loop();
 }

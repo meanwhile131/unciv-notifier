@@ -13,12 +13,11 @@ class Game {
 	bool new_turn = false;
 	Civilization current_player;
 
-	auto fetchGame() -> nlohmann::json;
+	auto fetch() -> nlohmann::json;
 
 	public:
 	explicit Game(const std::string& previewUrl);
 	void update();
 	[[nodiscard]] auto isNewTurn() const -> bool;
-
         auto getCurrentPlayer() -> Civilization;
 };

@@ -12,5 +12,5 @@ FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases
 FetchContent_MakeAvailable(nlohmann_json)
 FetchContent_Declare(tomlplusplus URL https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz)
 FetchContent_MakeAvailable(tomlplusplus)
-add_executable(main src/main.cpp src/game.cpp)
+add_executable(main src/main.cpp src/game.cpp src/user.cpp)
 target_link_libraries(main PRIVATE Td::TdStatic CURL::libcurl nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus)
