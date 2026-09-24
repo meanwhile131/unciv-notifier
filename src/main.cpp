@@ -16,7 +16,6 @@
 #include <utility>
 #include <zlib.h>
 #include "game.h"
-#include "user.h"
 
 using json = nlohmann::json;
 
@@ -32,7 +31,6 @@ namespace {
 		std::string notification;
 		td_api::int53 chat_id{};
 		Game current_game;
-		User user;
 
 		std::shared_mutex requestMutex;
 		td::ClientManager::RequestId requestId = 1;
@@ -47,13 +45,11 @@ namespace {
 		UncivNotifier(
 				const std::string &previewUrl,
 				td_api::object_ptr<td_api::proxy> proxy,
-				User user)
+				const std::vector<User>& users)
 			: client_manager(std::make_unique<td::ClientManager>()),
 			client_id(client_manager->create_client_id()),
-			current_game(previewUrl),
-			user(std::move(user))
+			current_game(previewUrl, users)
 		{
-
 			td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
 
 			send_query(td_api::make_object<td_api::getOption>("version"));
@@ -103,12 +99,8 @@ namespace {
 			Civilization player = current_game.getCurrentPlayer();
 			std::cout << "Current turn is " << player.civID << '\n';
 			bool new_turn = current_game.isNewTurn();
-			if (player.playerId == user.getUUID()) {
-				auto request = user.notifyIfNeeded(new_turn).value_or(nullptr);
-				if (request) {
-					std::cout << "notifying " + player.civID << " (" << chat_id << "), next notify after " << user.getNotifyInterval() << '\n';
-					send_query(std::move(request));
-				}
+			for (auto &&notification : current_game.getNotifications()) {
+				send_query(std::move(notification));
 			}
 		}
 		void handleUpdate(td_api::object_ptr<td_api::Object> update) {
@@ -178,9 +170,10 @@ auto main() -> int {
 			std::chrono::hours(config["notify"]["start_night"].value_or(0)),
 			config["notify"]["max_night_messages"].value_or(0),
 			std::chrono::hours(config["notify"]["end_night"].value_or(0)));
+	std::vector<User> users = {user};
 	UncivNotifier app(url,
 			std::move(proxy),
-			user,
+			users
 			);
 	app.loop();
 }

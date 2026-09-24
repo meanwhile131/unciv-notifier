@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.28)
 project(UncivNotifier)
 
 include(FetchContent)
-set(FETCHCONTENT_QUIET FALSE)
 set(FETCHCONTENT_TRY_FIND_PACKAGE_MODE ALWAYS)
 FetchContent_Declare(CURL URL https://curl.se/download/curl-8.22.0.tar.xz)
 FetchContent_MakeAvailable(CURL)
@@ -14,3 +13,4 @@ FetchContent_Declare(tomlplusplus URL https://github.com/marzer/tomlplusplus/arc
 FetchContent_MakeAvailable(tomlplusplus)
 add_executable(main src/main.cpp src/game.cpp src/user.cpp)
 target_link_libraries(main PRIVATE Td::TdStatic CURL::libcurl nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus)
+set_property(TARGET main PROPERTY CXX_STANDARD 20)

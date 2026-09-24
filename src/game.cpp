@@ -1,4 +1,6 @@
 #include "game.h"
+#include <iostream>
+#include <utility>
 #include <openssl/evp.h>
 #include <zlib.h>
 
@@ -12,7 +14,7 @@ namespace {
 	}
 }
 
-Game::Game(const std::string& previewUrl) : handle(curl_easy_init(), curl_easy_cleanup) {
+Game::Game(const std::string& previewUrl, const std::vector<User>& users) : handle(curl_easy_init(), curl_easy_cleanup), users(users) {
 	curl_easy_setopt(&handle, CURLOPT_URL, previewUrl.c_str());
 	curl_easy_setopt(&handle, CURLOPT_WRITEFUNCTION, write_callback);
 }
@@ -22,6 +24,19 @@ void Game::update() {
 	turn_count = game["turns"]; 
 
 	current_player = *std::ranges::find_if(game["civilizations"].begin(), game["civilizations"].end(), [&game](auto &civ) -> bool { return civ["civID"] == game["currentPlayer"];});
+}
+auto Game::getNotifications() -> std::vector<td_api::object_ptr<td_api::sendMessage>> {
+	std::vector<td_api::object_ptr<td_api::sendMessage>> notifications;
+	for (auto user : users) {
+		if (user.getUUID() == current_player.playerId) {
+			auto notification = user.notifyIfNeeded(new_turn);
+			if (notification.has_value()) {
+				std::cout << "notifying " + current_player.civID << " (" << user.getChatID() << "), next notify after " << user.getNotifyInterval() << '\n';
+				notifications.push_back(std::move(notification.value()));
+			}
+		}
+	}
+	return notifications;
 }
 auto Game::isNewTurn() const -> bool {
 	return new_turn;
