@@ -1,12 +1,11 @@
 #include "overload.h"
 #include <chrono>
-#include <cstddef>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <iostream>
 #include <mutex>
-#include <nlohmann/json.hpp>
 #include <openssl/evp.h>
+#include <nlohmann/json.hpp>
 #include <shared_mutex>
 #include <string>
 #include <td/telegram/Client.h>
@@ -16,81 +15,56 @@
 #include <toml++/toml.hpp>
 #include <utility>
 #include <zlib.h>
-#include <cstdint>
+#include "game.h"
 
 using json = nlohmann::json;
 
 namespace td_api = td::td_api;
 using namespace std::chrono_literals;
+using namespace std::literals;
 
+using uuid = std::string;
+using Users = std::map<uuid, std::shared_ptr<User>>;
 namespace {
-	auto write_callback(char *ptr, size_t  /*size*/, size_t nmemb, void *userdata) -> size_t {
-		auto *data = static_cast<std::string*>(userdata);
-		data->append(ptr, nmemb);
-		return nmemb;
-	}
-
 	class UncivNotifier {
 		using RequestCallback = std::function<void(td_api::object_ptr<td_api::Object>)>;
 		std::unique_ptr<td::ClientManager> client_manager;
 		td::ClientManager::ClientId client_id{};
-		CURL *handle = curl_easy_init();
 		std::jthread stateCheckThread;
 		std::string notification;
 		td_api::int53 chat_id{};
-		std::string uuid;
+		std::vector<Game> games;
+		Users users;
 
 		std::shared_mutex requestMutex;
 		td::ClientManager::RequestId requestId = 1;
 		std::unordered_map<td::ClientManager::RequestId, RequestCallback> requestCallbacks;
 
-		std::chrono::steady_clock::duration start_notify_interval;
-		std::chrono::steady_clock::duration notify_interval = start_notify_interval;
-		std::chrono::steady_clock::time_point last_notify;
-		unsigned int turn_count{};
-
-		std::chrono::hours start_night;
-		std::chrono::hours end_night;
-		unsigned int max_night_messages;
 		unsigned int night_messages = 0;
 
 		const td_api::int32 API_ID = 94575;
 		const td_api::string API_HASH = "a3406de8d171bb422bb6ddf3bbd800e2";
 
 		public:
-		UncivNotifier(const UncivNotifier &) = delete;
-		UncivNotifier(UncivNotifier &&) = delete;
-		auto operator=(const UncivNotifier &) -> UncivNotifier & = delete;
-		auto operator=(UncivNotifier &&) -> UncivNotifier & = delete;
 		UncivNotifier(
-				const std::string &previewUrl,
 				td_api::object_ptr<td_api::proxy> proxy,
-				std::string notification, td_api::int53 chat_id,
-				std::string uuid, std::chrono::hours start_night,
-				unsigned int max_night_messages,
-				std::chrono::hours end_night,
-				std::chrono::steady_clock::duration start_notify_interval)
-			: client_manager(std::make_unique<td::ClientManager>()), client_id(client_manager->create_client_id()), notification(std::move(std::move(notification))),
-			uuid(std::move(std::move(uuid))), chat_id(chat_id),
-			start_night(start_night), end_night(end_night),
-			max_night_messages(max_night_messages),
-			start_notify_interval(start_notify_interval) {
-				curl_easy_setopt(handle, CURLOPT_URL, previewUrl.c_str());
-				curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION,
-						write_callback);
+				std::vector<Game> games,
+				Users users)
+			: client_manager(std::make_unique<td::ClientManager>()),
+			client_id(client_manager->create_client_id()),
+			games(std::move(games)),
+			users(std::move(users))
+		{
+			td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
 
-				td::ClientManager::execute(
-						td_api::make_object<td_api::setLogVerbosityLevel>(1));
+			send_query(td_api::make_object<td_api::getOption>("version"));
 
-				send_query(
-						td_api::make_object<td_api::getOption>("version"));
-
-				if (proxy) {
-					auto request = td_api::make_object<td_api::addProxy>(
-							std::move(proxy), true, "");
-					send_query(std::move(request));
-				}
+			if (proxy) {
+				auto request = td_api::make_object<td_api::addProxy>(
+						std::move(proxy), true, "");
+				send_query(std::move(request));
 			}
+		}
 		void loop() {
 			while (true) {
 				const double UPDATE_TIMEOUT = 5;
@@ -107,9 +81,6 @@ namespace {
 					handleUpdate(std::move(update.object));
 				}
 			}
-		}
-		~UncivNotifier() {
-			curl_easy_cleanup(handle);
 		}
 		private:
 		void checkStateThread() {
@@ -129,95 +100,21 @@ namespace {
 			requestId++;
 		}
 		void checkGameState() {
-			auto now = std::chrono::utc_clock::now();
-			auto days = std::chrono::floor<std::chrono::days>(now);
-			std::chrono::hh_mm_ss time_of_day(now - days);
-			auto hours = time_of_day.hours();
-			bool overnight = start_night > end_night;
-			bool is_night_overnight = hours >= start_night || hours <= end_night;
-			bool is_night_day = hours >= start_night && hours <= end_night;
-			bool const is_night = overnight ? is_night_overnight : is_night_day;
-			if (is_night && night_messages >= max_night_messages) {
-				std::cout << "Skipping game checks because night and max message count reached" << '\n';
-				return;
-			}
-			if (!is_night && night_messages != 0) {
-				std::cout << "Resetting night message count" << '\n';
-				night_messages = 0;
-			}
-			std::cout << "Checking game state" << '\n';
-			std::string data;
-			curl_easy_setopt(handle, CURLOPT_WRITEDATA, &data);
-			CURLcode const code = curl_easy_perform(handle);
-			std::vector<unsigned char> data_vector(data.begin(), data.end());
-
-			std::vector<unsigned char> inbuf(data.size()); // data always smaller than base64 
-			int size = EVP_DecodeBlock(inbuf.data(), data_vector.data(), static_cast<int>(data_vector.size()));
-			inbuf.resize(size);
-
-			z_stream strm;
-			strm.zalloc = Z_NULL;
-			strm.zfree = Z_NULL;
-			strm.opaque = Z_NULL;
-			strm.total_in = 0;
-			strm.next_in = inbuf.data();
-			strm.avail_in = inbuf.size();
-			int ret = inflateInit2(&strm, MAX_WBITS + 16);
-			if (ret != Z_OK) {
-				std::cout << "inflateInit: " << ret << '\n';
-			}
-			const size_t BUFFER_SIZE = 32768;
-			std::vector<unsigned char> buffer(BUFFER_SIZE);
-			std::vector<unsigned char> decompressed;
-			while (ret != Z_STREAM_END) {
-				strm.next_out = buffer.data();
-				strm.avail_out = buffer.size();
-				ret = inflate(&strm, Z_NO_FLUSH);
-				if (ret != Z_OK && ret != Z_STREAM_END) {
-					std::cout << "inflate: " << ret << '\n';
-					break;
+			for (auto &game : games) {
+				game.update();
+				Civilization civilization = game.getCurrentPlayer();
+				std::cout << "Current turn is " << civilization.civID << '\n';
+				auto user = users[civilization.playerId];
+				if (!user) {
+					std::cout << "No user found for " << civilization.playerId << "\n";
+					continue;
 				}
-				size_t have = buffer.size() - strm.avail_out;
-				decompressed.insert(decompressed.end(), buffer.begin(), buffer.begin() + static_cast<int64_t>(have));
-			}
-			inflateEnd(&strm);
-			json game = json::parse(decompressed);
-			std::map<std::string, std::string> playerIDs;
-			for (json civilization : game["civilizations"]) {
-				if (civilization.contains("playerId")) {
-					playerIDs[civilization["civID"]] = civilization["playerId"];
+				auto notification = user->notifyIfNeeded(game.isNewTurn());
+				if (notification.has_value()) {
+					std::cout << "notifying " + civilization.civID << " (" << user->getChatID() << "), next notify after " << user->getNotifyInterval() << '\n';
+					send_query(std::move(notification.value()));
 				}
 			}
-			std::string currentCiv = game["currentPlayer"];
-			std::cout << "Current turn is " << currentCiv << '\n';
-			bool new_turn = game["turns"] > turn_count;
-			if (new_turn) {
-				notify_interval = start_notify_interval;
-			}
-			if (playerIDs.contains(currentCiv)) {
-				std::string player = playerIDs[currentCiv];
-				auto now = std::chrono::steady_clock::now();
-				auto since_last_notify = now - last_notify;
-				bool should_notify = (since_last_notify >= notify_interval) || new_turn;
-				if (player == uuid && should_notify) {
-					std::cout << "notifying " + currentCiv << " (" << chat_id << "), next notify after " << notify_interval << '\n';
-					auto request = td_api::make_object<td_api::sendMessage>();
-					request->chat_id_ = chat_id;
-					auto message = td_api::make_object<td_api::inputMessageText>();
-					auto text = td_api::make_object<td_api::formattedText>();
-					text->text_ = notification;
-					message->text_ = std::move(text);
-					request->input_message_content_ = std::move(message);
-					notify_interval *= 2;
-					last_notify = now;
-					if (is_night) {
-						night_messages++;
-						std::cout << "Used " << night_messages << "/" << max_night_messages << " night messages" << '\n';
-					}
-					send_query(std::move(request));
-				}
-			}
-			turn_count = game["turns"];
 		}
 		void handleUpdate(td_api::object_ptr<td_api::Object> update) {
 			td_api::downcast_call(*update, overloaded(
@@ -260,17 +157,15 @@ namespace {
 									}));
 						},
 				[](auto &upd) -> auto {
-					std::cout << td_api::to_string(upd) << std::endl;
 				}));
 
 		}
 	};
-} // namespace
+}  // namespace
 
 auto main() -> int {
 	auto config = toml::parse_file("config.toml");
 	curl_global_init(CURL_GLOBAL_ALL);
-	std::string url = config["game"]["url"].value_or("");
 	td_api::object_ptr<td_api::proxy> proxy;
 	if (config.contains("proxy")) {
 		proxy = td_api::make_object<td_api::proxy>(
@@ -278,13 +173,26 @@ auto main() -> int {
 				config["proxy"]["port"].value_or(0),
 				td_api::make_object<td_api::proxyTypeMtproto>(config["proxy"]["secret"].value_or("")));
 	}
-	UncivNotifier app(url, std::move(proxy),
-			config["notify"]["text"].value_or(""),
-			config["notify"]["chat_id"].value_or(0),
-			config["notify"]["uuid"].value_or(""),
-			std::chrono::hours(config["notify"]["start_night"].value_or(0)),
-			config["notify"]["max_night_messages"].value_or(0),
-			std::chrono::hours(config["notify"]["end_night"].value_or(0)),
-			std::chrono::minutes(config["notify"]["start_notify_interval"].value_or(0)));
+	Users users;
+	for (auto &node : *config["notify"]["users"].as_array()) {
+		auto user_config = *node.as_table();
+		std::string uuid = user_config["uuid"].value_or("");
+		auto user = std::make_shared<User>(
+				user_config["chat_id"].value_or(0),
+				std::chrono::minutes(user_config["start_notify_interval"].value_or(0)),
+				user_config["text"].value_or(""),
+				std::chrono::hours(user_config["start_night"].value_or(0)),
+				user_config["max_night_messages"].value_or(0),
+				std::chrono::hours(user_config["end_night"].value_or(0)));
+		users[uuid] = std::move(user);
+	}
+	std::vector<Game> games;
+	for (auto &url_node : *config["game"]["urls"].as_array()) {
+		std::string url = url_node.value_or(""s);
+		std::cout << "Adding game with URL: " << url << "\n";
+		Game game(url);
+		games.push_back(std::move(game));
+	}
+	UncivNotifier app(std::move(proxy), std::move(games), std::move(users));
 	app.loop();
 }
