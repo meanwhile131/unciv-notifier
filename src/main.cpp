@@ -158,6 +158,7 @@ namespace {
 									}));
 						},
 				[](auto &upd) -> auto {
+					std::cout << td_api::to_string(upd) << std::endl;
 				}));
 
 		}
@@ -178,13 +179,16 @@ auto main() -> int {
 	for (auto &node : *config["notify"]["users"].as_array()) {
 		auto user_config = *node.as_table();
 		std::string uuid = user_config["uuid"].value_or("");
+		auto chat_id = user_config["chat_id"].value<td::td_api::int53>().value();
+		std::chrono::minutes start_notify_interval(user_config["start_notify_interval"].value_or(0));
 		auto user = std::make_shared<User>(
-				user_config["chat_id"].value_or(0),
-				std::chrono::minutes(user_config["start_notify_interval"].value_or(0)),
+				chat_id,
+				start_notify_interval,
 				user_config["text"].value_or(""),
 				std::chrono::hours(user_config["start_night"].value_or(0)),
 				user_config["max_night_messages"].value_or(0),
 				std::chrono::hours(user_config["end_night"].value_or(0)));
+		std::cout << "Added user with chat id " << chat_id << " and uuid " << uuid << " and start notify interval " << start_notify_interval << "\n";
 		users[uuid] = std::move(user);
 	}
 	std::vector<Game> games;
