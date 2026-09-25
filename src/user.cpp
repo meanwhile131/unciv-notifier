@@ -3,15 +3,17 @@
 #include <utility>
 
 namespace td_api = td::td_api;
-User::User(td::td_api::int53 chat_id, std::string uuid, std::chrono::steady_clock::duration start_notify_interval, std::string notification, std::chrono::hours start_night, unsigned int max_night_messages, std::chrono::hours end_night) : chat_id(chat_id), uuid(std::move(uuid)), start_notify_interval(start_notify_interval), notification(std::move(notification)), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages) {}
+User::User(td::td_api::int53 chat_id, std::chrono::steady_clock::duration start_notify_interval, std::string notification, std::chrono::hours start_night, unsigned int max_night_messages, std::chrono::hours end_night) : chat_id(chat_id), start_notify_interval(start_notify_interval), notify_interval(start_notify_interval), notification(std::move(notification)), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages) {}
 
 auto User::notifyIfNeeded(bool new_turn) -> std::optional<td_api::object_ptr<td_api::sendMessage>> {
 	if (new_turn) {
 		notify_interval = start_notify_interval;
 	}
 	auto now = std::chrono::steady_clock::now();
+	std::cout << "last notify: " << std::chrono::duration_cast<std::chrono::seconds>(last_notify.time_since_epoch()) << "\n";
 	auto since_last_notify = now - last_notify;
-	bool is_night = isNight(now);
+	std::cout << "Since last notify: " << std::chrono::duration_cast<std::chrono::seconds>(since_last_notify) << "\n";
+	bool is_night = isNight(std::chrono::utc_clock::now());
 	if (is_night && night_messages >= max_night_messages) {
 		std::cout << "Skipping game checks because night and max message count reached" << '\n';
 		return {};
@@ -33,13 +35,14 @@ auto User::notifyIfNeeded(bool new_turn) -> std::optional<td_api::object_ptr<td_
 	request->input_message_content_ = std::move(message);
 	notify_interval *= 2;
 	last_notify = now;
+	std::cout << "Updated last notify to " << std::chrono::duration_cast<std::chrono::seconds>(last_notify.time_since_epoch()) << "\n";
 	if (is_night) {
 		night_messages++;
 		std::cout << "Used " << night_messages << "/" << max_night_messages << " night messages" << '\n';
 	}
 	return request;
 }
-auto User::isNight(std::chrono::steady_clock::time_point time) -> bool {
+auto User::isNight(std::chrono::utc_clock::time_point time) -> bool {
 	auto days = std::chrono::floor<std::chrono::days>(time);
 	std::chrono::hh_mm_ss time_of_day(time - days);
 	auto hours = time_of_day.hours();
@@ -50,9 +53,6 @@ auto User::isNight(std::chrono::steady_clock::time_point time) -> bool {
 }
 auto User::getNotifyInterval() -> std::chrono::steady_clock::duration {
 	return notify_interval;
-}
-auto User::getUUID() -> std::string {
-	return uuid;
 }
 auto User::getChatID() const -> td::td_api::int53 {
 	return chat_id;

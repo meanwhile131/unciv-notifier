@@ -21,7 +21,10 @@ using json = nlohmann::json;
 
 namespace td_api = td::td_api;
 using namespace std::chrono_literals;
+using namespace std::literals;
 
+using uuid = std::string;
+using Users = std::map<uuid, std::shared_ptr<User>>;
 namespace {
 	class UncivNotifier {
 		using RequestCallback = std::function<void(td_api::object_ptr<td_api::Object>)>;
@@ -30,7 +33,8 @@ namespace {
 		std::jthread stateCheckThread;
 		std::string notification;
 		td_api::int53 chat_id{};
-		Game current_game;
+		std::vector<Game> games;
+		Users users;
 
 		std::shared_mutex requestMutex;
 		td::ClientManager::RequestId requestId = 1;
@@ -43,12 +47,13 @@ namespace {
 
 		public:
 		UncivNotifier(
-				const std::string &previewUrl,
 				td_api::object_ptr<td_api::proxy> proxy,
-				const std::vector<User>& users)
+				std::vector<Game> games,
+				Users users)
 			: client_manager(std::make_unique<td::ClientManager>()),
 			client_id(client_manager->create_client_id()),
-			current_game(previewUrl, users)
+			games(std::move(games)),
+			users(std::move(users))
 		{
 			td::ClientManager::execute(td_api::make_object<td_api::setLogVerbosityLevel>(1));
 
@@ -95,12 +100,20 @@ namespace {
 			requestId++;
 		}
 		void checkGameState() {
-			current_game.update();
-			Civilization player = current_game.getCurrentPlayer();
-			std::cout << "Current turn is " << player.civID << '\n';
-			bool new_turn = current_game.isNewTurn();
-			for (auto &&notification : current_game.getNotifications()) {
-				send_query(std::move(notification));
+			for (auto &game : games) {
+				game.update();
+				Civilization civilization = game.getCurrentPlayer();
+				std::cout << "Current turn is " << civilization.civID << '\n';
+				auto user = users[civilization.playerId];
+				if (!user) {
+					std::cout << "No user found for " << civilization.playerId << "\n";
+					continue;
+				}
+				auto notification = user->notifyIfNeeded(game.isNewTurn());
+				if (notification.has_value()) {
+					std::cout << "notifying " + civilization.civID << " (" << user->getChatID() << "), next notify after " << user->getNotifyInterval() << '\n';
+					send_query(std::move(notification.value()));
+				}
 			}
 		}
 		void handleUpdate(td_api::object_ptr<td_api::Object> update) {
@@ -144,7 +157,6 @@ namespace {
 									}));
 						},
 				[](auto &upd) -> auto {
-					std::cout << td_api::to_string(upd) << std::endl;
 				}));
 
 		}
@@ -154,7 +166,6 @@ namespace {
 auto main() -> int {
 	auto config = toml::parse_file("config.toml");
 	curl_global_init(CURL_GLOBAL_ALL);
-	std::string url = config["game"]["url"].value_or("");
 	td_api::object_ptr<td_api::proxy> proxy;
 	if (config.contains("proxy")) {
 		proxy = td_api::make_object<td_api::proxy>(
@@ -162,18 +173,26 @@ auto main() -> int {
 				config["proxy"]["port"].value_or(0),
 				td_api::make_object<td_api::proxyTypeMtproto>(config["proxy"]["secret"].value_or("")));
 	}
-	User user(
-			config["notify"]["chat_id"].value_or(0),
-			config["notify"]["uuid"].value_or(""),
-			std::chrono::minutes(config["notify"]["start_notify_interval"].value_or(0)),
-			config["notify"]["text"].value_or(""),
-			std::chrono::hours(config["notify"]["start_night"].value_or(0)),
-			config["notify"]["max_night_messages"].value_or(0),
-			std::chrono::hours(config["notify"]["end_night"].value_or(0)));
-	std::vector<User> users = {user};
-	UncivNotifier app(url,
-			std::move(proxy),
-			users
-			);
+	Users users;
+	for (auto &node : *config["notify"]["users"].as_array()) {
+		auto user_config = *node.as_table();
+		std::string uuid = user_config["uuid"].value_or("");
+		auto user = std::make_shared<User>(
+				user_config["chat_id"].value_or(0),
+				std::chrono::minutes(user_config["start_notify_interval"].value_or(0)),
+				user_config["text"].value_or(""),
+				std::chrono::hours(user_config["start_night"].value_or(0)),
+				user_config["max_night_messages"].value_or(0),
+				std::chrono::hours(user_config["end_night"].value_or(0)));
+		users[uuid] = std::move(user);
+	}
+	std::vector<Game> games;
+	for (auto &url_node : *config["game"]["urls"].as_array()) {
+		std::string url = url_node.value_or(""s);
+		std::cout << "Adding game with URL: " << url << "\n";
+		Game game(url);
+		games.push_back(std::move(game));
+	}
+	UncivNotifier app(std::move(proxy), std::move(games), std::move(users));
 	app.loop();
 }
