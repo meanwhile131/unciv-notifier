@@ -1,6 +1,5 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
-#include "user.h"
 
 struct Civilization {
 	std::string playerId;
@@ -19,7 +18,7 @@ class Game {
 	auto fetch() -> std::optional<nlohmann::json>;
 
 	public:
-	explicit Game(std::string previewUrl);
+	explicit Game(const std::string& previewUrl);
 	void update();
 	[[nodiscard]] auto isNewTurn() const -> bool;
         auto getCurrentPlayer() -> Civilization;

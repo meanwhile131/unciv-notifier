@@ -1,21 +1,23 @@
-#include "game.h"
+#include "game.hpp"
 #include <curl/curl.h>
 #include <iostream>
-#include <utility>
+#include <cstddef>
+#include <string>
 #include <openssl/evp.h>
 #include <zlib.h>
+#include <zconf.h>
 
 using json = nlohmann::json;
 
 namespace {
-	auto write_callback(char *ptr, size_t  size, size_t nmemb, void *userdata) -> size_t {
+	auto write_callback(char *ptr, size_t /*size*/, size_t nmemb, void *userdata) -> size_t {
 		auto *data = static_cast<std::string*>(userdata);
 		data->append(ptr, nmemb);
 		return nmemb;
 	}
 }
 
-Game::Game(std::string previewUrl) : handle(curl_easy_init(), curl_easy_cleanup) {
+Game::Game(const std::string& previewUrl) : handle(curl_easy_init(), curl_easy_cleanup) {
 	curl_error.reserve(CURL_ERROR_SIZE+1);
 	curl_easy_setopt(&handle, CURLOPT_ERRORBUFFER, curl_error.data());
 	CURLcode code = curl_easy_setopt(handle.get(), CURLOPT_URL, previewUrl.c_str());

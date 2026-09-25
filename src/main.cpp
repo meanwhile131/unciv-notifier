@@ -1,4 +1,4 @@
-#include "overload.h"
+#include "overload.hpp"
 #include <chrono>
 #include <curl/curl.h>
 #include <curl/easy.h>
@@ -15,7 +15,8 @@
 #include <toml++/toml.hpp>
 #include <utility>
 #include <zlib.h>
-#include "game.h"
+#include "game.hpp"
+#include "user.hpp"
 
 using json = nlohmann::json;
 
