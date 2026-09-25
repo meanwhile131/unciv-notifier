@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <openssl/evp.h>
 #include <nlohmann/json.hpp>
@@ -181,9 +182,11 @@ auto main() -> int {
 		std::string uuid = user_config["uuid"].value_or("");
 		auto chat_id = user_config["chat_id"].value<td::td_api::int53>().value();
 		std::chrono::minutes start_notify_interval(user_config["start_notify_interval"].value_or(0));
+		auto max_messages_per_turn = user_config["max_messages_per_turn"].value_or(std::numeric_limits<unsigned int>::max());
 		auto user = std::make_shared<User>(
 				chat_id,
 				start_notify_interval,
+				max_messages_per_turn,
 				user_config["text"].value_or(""),
 				std::chrono::hours(user_config["start_night"].value_or(0)),
 				user_config["max_night_messages"].value_or(0),

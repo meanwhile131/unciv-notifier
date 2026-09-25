@@ -10,6 +10,8 @@ class User {
 	std::chrono::hours end_night;
 	unsigned int night_messages = 0;
 	unsigned int max_night_messages;
+	unsigned int max_messages_per_turn;
+	unsigned int messages_this_turn = 0;
 	std::string notification;
 
 	auto isNight(std::chrono::utc_clock::time_point time) -> bool;
@@ -21,6 +23,7 @@ class User {
 	~User() = default;
 	User(td::td_api::int53 chat_id,
 			std::chrono::steady_clock::duration start_notify_interval,
+			unsigned int max_messages_per_turn,
 			std::string notification, std::chrono::hours start_night,
 			unsigned int max_night_messages, std::chrono::hours end_night);
 	User(User const &) = delete;

@@ -3,11 +3,16 @@
 #include <utility>
 
 namespace td_api = td::td_api;
-User::User(td::td_api::int53 chat_id, std::chrono::steady_clock::duration start_notify_interval, std::string notification, std::chrono::hours start_night, unsigned int max_night_messages, std::chrono::hours end_night) : chat_id(chat_id), start_notify_interval(start_notify_interval), notify_interval(start_notify_interval), notification(std::move(notification)), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages) {}
+User::User(td::td_api::int53 chat_id, std::chrono::steady_clock::duration start_notify_interval, unsigned int max_messages_per_turn, std::string notification, std::chrono::hours start_night, unsigned int max_night_messages, std::chrono::hours end_night) : chat_id(chat_id), max_messages_per_turn(max_messages_per_turn), start_notify_interval(start_notify_interval), notify_interval(start_notify_interval), notification(std::move(notification)), start_night(start_night), end_night(end_night), max_night_messages(max_night_messages) {}
 
 auto User::notifyIfNeeded(bool new_turn) -> std::optional<td_api::object_ptr<td_api::sendMessage>> {
 	if (new_turn) {
 		notify_interval = start_notify_interval;
+		messages_this_turn = 0;
+	}
+	if (messages_this_turn >= max_messages_per_turn) {
+		std::cout << "Skipping game checks because max message count per turn reached" << '\n';
+		return {};
 	}
 	auto now = std::chrono::steady_clock::now();
 	std::cout << "last notify: " << std::chrono::duration_cast<std::chrono::seconds>(last_notify.time_since_epoch()) << "\n";
@@ -35,6 +40,8 @@ auto User::notifyIfNeeded(bool new_turn) -> std::optional<td_api::object_ptr<td_
 	request->input_message_content_ = std::move(message);
 	notify_interval *= 2;
 	last_notify = now;
+	messages_this_turn++;
+	std::cout << "Used " << messages_this_turn << "/" << max_messages_per_turn << " messages per turn" << '\n';
 	std::cout << "Updated last notify to " << std::chrono::duration_cast<std::chrono::seconds>(last_notify.time_since_epoch()) << "\n";
 	if (is_night) {
 		night_messages++;
